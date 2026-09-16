@@ -1,4 +1,6 @@
 /build*
+/Doom 3.zip
+/Doom 3/
 *~
 .*.swp
 *.pyc
