@@ -40,6 +40,21 @@ Compared to the original _DOOM 3_, the changes of _dhewm 3_ worth mentioning are
 
 See [Changelog.md](./Changelog.md) for a more complete changelog.
 
+## Renderer performance optimizations
+
+The renderer reduces CPU and OpenGL driver overhead in its interaction and dynamic-vertex paths:
+
+- Frame-temporary vertex data is staged in CPU memory and uploaded as one contiguous range per
+  render-command issue. The VBO is mapped once for the upload, with `glBufferSubData` as a fallback.
+- Compatible local and global ARB2 light-interaction chains share one setup/teardown sequence.
+- Opaque light-interaction surfaces are sorted by material to reduce texture and program state changes.
+- Interaction gamma parameters and vertex-array state are configured outside the per-surface draw path.
+- Apple arm64 builds use compiler settings selected to reduce hot-path code size and improve code layout.
+
+On an Apple M2 Pro at 1024x768 with Ultra quality, the warmed `demo1` timedemo's average throughput
+increased from 153.5 FPS to 195.9 FPS, a 27.6% gain. Results depend on the GPU, driver, CPU, resolution,
+and scene; this measurement should not be treated as a universal improvement across all systems.
+
 
 # GENERAL NOTES
 
