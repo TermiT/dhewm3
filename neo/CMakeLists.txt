@@ -400,6 +400,14 @@ if(D3_COMPILER_IS_GCC_OR_CLANG)
 	# these options (together with -ffinite-math-only) should make compilers use direct
 	# CPU instructions (if available) instead of libm calls for many math operations
 	add_compile_options(-fno-math-errno -fno-trapping-math)
+	# Apple Clang's default loop unrolling increases hot-path code size enough to
+	# reduce timedemo throughput on arm64.
+	if(APPLE AND cpu STREQUAL "arm64")
+		add_compile_options(-fno-unroll-loops)
+		add_compile_options(-fvisibility-inlines-hidden)
+		add_compile_options("SHELL:-mllvm -enable-tail-merge=1")
+		add_compile_options("SHELL:-mllvm -align-all-blocks=2")
+	endif()
 	if( (NOT cpu STREQUAL "arm64") OR APPLE OR WIN32 )
 		# RPi5 on Linux has a weird bug with -ffinite-math-only (#749)
 		# so only enable it for other CPU architectures or Apple or Windows ARM64 devices,

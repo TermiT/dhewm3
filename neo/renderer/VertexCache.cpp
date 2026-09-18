@@ -177,10 +177,12 @@ void idVertexCache::Init() {
 
 	// set up the dynamic frame memory
 	frameBytes = FRAME_MEMORY_BYTES;
+	dynamicUploadThisFrame = 0;
 	staticAllocTotal = 0;
 
 	byte	*junk = (byte *)Mem_Alloc( frameBytes );
 	for ( int i = 0 ; i < NUM_VERTEX_FRAMES ; i++ ) {
+		tempBufferData[i] = NULL;
 		allocatingTempBuffer = true;	// force the alloc to use GL_STREAM_DRAW_ARB
 		Alloc( junk, frameBytes, &tempBuffers[i] );
 		allocatingTempBuffer = false;
@@ -188,6 +190,9 @@ void idVertexCache::Init() {
 		// unlink these from the static list, so they won't ever get purged
 		tempBuffers[i]->next->prev = tempBuffers[i]->prev;
 		tempBuffers[i]->prev->next = tempBuffers[i]->next;
+		if ( tempBuffers[i]->vbo ) {
+			tempBufferData[i] = (byte *)Mem_Alloc( frameBytes );
+		}
 	}
 	Mem_Free( junk );
 
@@ -214,8 +219,12 @@ idVertexCache::Shutdown
 ===========
 */
 void idVertexCache::Shutdown() {
-//	PurgeAll();	// !@#: also purge the temp buffers
-
+	for ( int i = 0; i < NUM_VERTEX_FRAMES; i++ ) {
+		if ( tempBufferData[i] ) {
+			Mem_Free( tempBufferData[i] );
+			tempBufferData[i] = NULL;
+		}
+	}
 	headerAllocator.Shutdown();
 }
 
@@ -420,13 +429,39 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 	block->vbo = tempBuffers[listNum]->vbo;
 
 	if ( block->vbo ) {
-		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, block->vbo );
-		qglBufferSubDataARB( GL_ARRAY_BUFFER_ARB, block->offset, (GLsizeiptrARB)size, data );
+		SIMDProcessor->Memcpy( tempBufferData[listNum] + block->offset, data, size );
 	} else {
 		SIMDProcessor->Memcpy( (byte *)block->virtMem + block->offset, data, size );
 	}
 
 	return block;
+}
+
+/*
+===========
+idVertexCache::UploadFrameTemp
+===========
+*/
+void idVertexCache::UploadFrameTemp() {
+	if ( virtualMemory || dynamicUploadThisFrame >= dynamicAllocThisFrame ) {
+		return;
+	}
+
+	const int uploadSize = dynamicAllocThisFrame - dynamicUploadThisFrame;
+	qglBindBufferARB( GL_ARRAY_BUFFER_ARB, tempBuffers[listNum]->vbo );
+	byte *mappedBuffer = (byte *)qglMapBufferARB( GL_ARRAY_BUFFER_ARB, GL_WRITE_ONLY_ARB );
+	if ( mappedBuffer ) {
+		SIMDProcessor->Memcpy( mappedBuffer + dynamicUploadThisFrame,
+			tempBufferData[listNum] + dynamicUploadThisFrame, uploadSize );
+		if ( !qglUnmapBufferARB( GL_ARRAY_BUFFER_ARB ) ) {
+			qglBufferSubDataARB( GL_ARRAY_BUFFER_ARB, dynamicUploadThisFrame, (GLsizeiptrARB)uploadSize,
+				tempBufferData[listNum] + dynamicUploadThisFrame );
+		}
+	} else {
+		qglBufferSubDataARB( GL_ARRAY_BUFFER_ARB, dynamicUploadThisFrame, (GLsizeiptrARB)uploadSize,
+			tempBufferData[listNum] + dynamicUploadThisFrame );
+	}
+	dynamicUploadThisFrame = dynamicAllocThisFrame;
 }
 
 /*
@@ -477,6 +512,7 @@ void idVertexCache::EndFrame() {
 	staticAllocThisFrame = 0;
 	staticCountThisFrame = 0;
 	dynamicAllocThisFrame = 0;
+	dynamicUploadThisFrame = 0;
 	dynamicCountThisFrame = 0;
 	tempOverflow = false;
 
