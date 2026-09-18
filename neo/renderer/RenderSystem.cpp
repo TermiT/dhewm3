@@ -150,6 +150,7 @@ static void R_IssueRenderCommands( void ) {
 	// r_skipRender is usually more usefull, because it will still
 	// draw 2D graphics
 	if ( !r_skipBackEnd.GetBool() ) {
+		vertexCache.UploadFrameTemp();
 		RB_ExecuteBackEndCommands( frameData->cmdHead );
 	}
 

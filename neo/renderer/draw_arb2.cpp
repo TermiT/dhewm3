@@ -106,14 +106,6 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, din->diffuseColor.ToFloatPtr() );
 	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, din->specularColor.ToFloatPtr() );
 
-	// DG: brightness and gamma in shader as program.env[4]
-	if ( r_gammaInShader.GetBool() ) {
-		// program.env[4].xyz are all r_brightness, program.env[4].w is 1.0/r_gamma
-		float parm[4];
-		parm[0] = parm[1] = parm[2] = r_brightness.GetFloat();
-		parm[3] = 1.0/r_gamma.GetFloat(); // 1.0/gamma so the shader doesn't have to do this calculation
-		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
-	}
 
 	// set the textures
 
@@ -142,14 +134,33 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 }
 
 
+static ID_INLINE void RB_ARB2_DrawInteractionSurface( const drawSurf_t *drawSurf ) {
+	idDrawVert *ac = (idDrawVert *)vertexCache.Position( drawSurf->geo->ambientCache );
+	qglColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
+	qglVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
+	qglVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
+	qglVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
+	qglVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
+	qglVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
+	RB_CreateSingleDrawInteractions( drawSurf, RB_ARB2_DrawInteraction );
+}
+
+static int RB_ARB2_InteractionSurfaceCompare( const void *left, const void *right ) {
+	const drawSurf_t *a = *(const drawSurf_t * const *)left;
+	const drawSurf_t *b = *(const drawSurf_t * const *)right;
+	const uintptr_t aMaterial = (uintptr_t)a->material;
+	const uintptr_t bMaterial = (uintptr_t)b->material;
+	return aMaterial < bMaterial ? -1 : aMaterial > bMaterial;
+}
+
 /*
 =============
 RB_ARB2_CreateDrawInteractions
 
 =============
 */
-void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
-	if ( !surf ) {
+void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf, const drawSurf_t *additionalSurf = NULL, bool sortSurfaces = true ) {
+	if ( !surf && !additionalSurf ) {
 		return;
 	}
 
@@ -168,12 +179,6 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	qglEnable(GL_VERTEX_PROGRAM_ARB);
 	qglEnable(GL_FRAGMENT_PROGRAM_ARB);
 
-	// enable the vertex arrays
-	qglEnableVertexAttribArrayARB( 8 );
-	qglEnableVertexAttribArrayARB( 9 );
-	qglEnableVertexAttribArrayARB( 10 );
-	qglEnableVertexAttribArrayARB( 11 );
-	qglEnableClientState( GL_COLOR_ARRAY );
 
 	// texture 0 is the normalization cube map for the vector towards the light
 	GL_SelectTextureNoClient( 0 );
@@ -192,28 +197,33 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	}
 
 
-	for ( ; surf ; surf=surf->nextOnLight ) {
-		// perform setup here that will not change over multiple interaction passes
-
-		// set the vertex pointers
-		idDrawVert	*ac = (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
-		qglColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), ac->color );
-		qglVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->normal.ToFloatPtr() );
-		qglVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[1].ToFloatPtr() );
-		qglVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), ac->tangents[0].ToFloatPtr() );
-		qglVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
-		qglVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-
-		// this may cause RB_ARB2_DrawInteraction to be exacuted multiple
-		// times with different colors and images if the surface or light have multiple layers
-		RB_CreateSingleDrawInteractions( surf, RB_ARB2_DrawInteraction );
+	const drawSurf_t *chains[2] = { surf, additionalSurf };
+	if ( sortSurfaces ) {
+		int surfaceCount = 0;
+		for ( int chain = 0; chain < 2; chain++ ) {
+			for ( const drawSurf_t *drawSurf = chains[chain]; drawSurf; drawSurf = drawSurf->nextOnLight ) {
+				surfaceCount++;
+			}
+		}
+		const drawSurf_t **surfaces = (const drawSurf_t **)_alloca( surfaceCount * sizeof( *surfaces ) );
+		int surfaceIndex = 0;
+		for ( int chain = 0; chain < 2; chain++ ) {
+			for ( const drawSurf_t *drawSurf = chains[chain]; drawSurf; drawSurf = drawSurf->nextOnLight ) {
+				surfaces[surfaceIndex++] = drawSurf;
+			}
+		}
+		qsort( surfaces, surfaceCount, sizeof( *surfaces ), RB_ARB2_InteractionSurfaceCompare );
+		for ( surfaceIndex = 0; surfaceIndex < surfaceCount; surfaceIndex++ ) {
+			RB_ARB2_DrawInteractionSurface( surfaces[surfaceIndex] );
+		}
+	} else {
+		for ( int chain = 0; chain < 2; chain++ ) {
+			for ( const drawSurf_t *drawSurf = chains[chain]; drawSurf; drawSurf = drawSurf->nextOnLight ) {
+				RB_ARB2_DrawInteractionSurface( drawSurf );
+			}
+		}
 	}
 
-	qglDisableVertexAttribArrayARB( 8 );
-	qglDisableVertexAttribArrayARB( 9 );
-	qglDisableVertexAttribArrayARB( 10 );
-	qglDisableVertexAttribArrayARB( 11 );
-	qglDisableClientState( GL_COLOR_ARRAY );
 
 	// disable features
 	GL_SelectTextureNoClient( 6 );
@@ -252,6 +262,19 @@ void RB_ARB2_DrawInteractions( void ) {
 
 	GL_SelectTexture( 0 );
 	qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
+	// enable the vertex arrays
+	qglEnableVertexAttribArrayARB( 8 );
+	qglEnableVertexAttribArrayARB( 9 );
+	qglEnableVertexAttribArrayARB( 10 );
+	qglEnableVertexAttribArrayARB( 11 );
+	qglEnableClientState( GL_COLOR_ARRAY );
+
+	if ( r_gammaInShader.GetBool() ) {
+		float parm[4];
+		parm[0] = parm[1] = parm[2] = r_brightness.GetFloat();
+		parm[3] = 1.0f / r_gamma.GetFloat();
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
+	}
 
 	//
 	// for each light, perform adding and shadowing
@@ -293,17 +316,25 @@ void RB_ARB2_DrawInteractions( void ) {
 			qglEnable( GL_VERTEX_PROGRAM_ARB );
 			qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
 			RB_StencilShadowPass( vLight->globalShadows );
-			RB_ARB2_CreateDrawInteractions( vLight->localInteractions );
-			qglEnable( GL_VERTEX_PROGRAM_ARB );
-			qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
-			RB_StencilShadowPass( vLight->localShadows );
-			RB_ARB2_CreateDrawInteractions( vLight->globalInteractions );
+			if ( vLight->localShadows ) {
+				RB_ARB2_CreateDrawInteractions( vLight->localInteractions );
+				qglEnable( GL_VERTEX_PROGRAM_ARB );
+				qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
+				RB_StencilShadowPass( vLight->localShadows );
+				RB_ARB2_CreateDrawInteractions( vLight->globalInteractions );
+			} else {
+				RB_ARB2_CreateDrawInteractions( vLight->localInteractions, vLight->globalInteractions );
+			}
 			qglDisable( GL_VERTEX_PROGRAM_ARB );	// if there weren't any globalInteractions, it would have stayed on
 		} else {
 			RB_StencilShadowPass( vLight->globalShadows );
-			RB_ARB2_CreateDrawInteractions( vLight->localInteractions );
-			RB_StencilShadowPass( vLight->localShadows );
-			RB_ARB2_CreateDrawInteractions( vLight->globalInteractions );
+			if ( vLight->localShadows ) {
+				RB_ARB2_CreateDrawInteractions( vLight->localInteractions );
+				RB_StencilShadowPass( vLight->localShadows );
+				RB_ARB2_CreateDrawInteractions( vLight->globalInteractions );
+			} else {
+				RB_ARB2_CreateDrawInteractions( vLight->localInteractions, vLight->globalInteractions );
+			}
 		}
 
 		// translucent surfaces never get stencil shadowed
@@ -314,7 +345,7 @@ void RB_ARB2_DrawInteractions( void ) {
 		qglStencilFunc( GL_ALWAYS, 128, 255 );
 
 		backEnd.depthFunc = GLS_DEPTHFUNC_LESS;
-		RB_ARB2_CreateDrawInteractions( vLight->translucentInteractions );
+		RB_ARB2_CreateDrawInteractions( vLight->translucentInteractions, NULL, false );
 
 		backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL;
 	}
@@ -322,6 +353,11 @@ void RB_ARB2_DrawInteractions( void ) {
 	// disable stencil shadow test
 	qglStencilFunc( GL_ALWAYS, 128, 255 );
 
+	qglDisableVertexAttribArrayARB( 8 );
+	qglDisableVertexAttribArrayARB( 9 );
+	qglDisableVertexAttribArrayARB( 10 );
+	qglDisableVertexAttribArrayARB( 11 );
+	qglDisableClientState( GL_COLOR_ARRAY );
 	GL_SelectTexture( 0 );
 	qglEnableClientState( GL_TEXTURE_COORD_ARRAY );
 }

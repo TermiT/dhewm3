@@ -88,6 +88,8 @@ public:
 	// will return NULL if the vertex cache is completely full
 	// As with Position(), this may not actually be a pointer you can access.
 	vertCache_t	*	AllocFrameTemp( void *data, int bytes );
+	// uploads all frame-temp data accumulated since the previous render command issue
+	void			UploadFrameTemp();
 
 	// notes that a buffer is used this frame, so it can't be purged
 	// out from under the GPU
@@ -119,6 +121,7 @@ private:
 	int				staticAllocThisFrame;	// debug counter
 	int				staticCountThisFrame;
 	int				dynamicAllocThisFrame;
+	int				dynamicUploadThisFrame;
 	int				dynamicCountThisFrame;
 
 	int				currentFrame;			// for purgable block tracking
@@ -129,6 +132,7 @@ private:
 	bool			allocatingTempBuffer;	// force GL_STREAM_DRAW_ARB
 
 	vertCache_t		*tempBuffers[NUM_VERTEX_FRAMES];		// allocated at startup
+	byte			*tempBufferData[NUM_VERTEX_FRAMES];
 	bool			tempOverflow;			// had to alloc a temp in static memory
 
 	idBlockAlloc<vertCache_t,1024>	headerAllocator;

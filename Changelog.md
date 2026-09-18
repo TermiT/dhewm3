@@ -7,6 +7,8 @@ Note: Numbers starting with a "#" like #330 refer to the bugreport with that num
 1.5.5 (2026-06-08)
 ------------------------------------------------------------------------
 
+* Reduce OpenGL driver overhead by batching frame-temporary vertex-buffer uploads and compatible
+  light interaction chains.
 * Enable/disable Soft Particles when **loading** a graphics quality preset (only enabled in Ultra preset,
   though you can still configure it independently like before; #604)
 * Greatly improve precision of internal timing, which should eliminate micro stutters
